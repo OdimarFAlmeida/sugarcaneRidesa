@@ -1,0 +1,200 @@
+---
+title: "Classification of sugarcane genotypes according their reaction against smut disease"
+output: html_notebook
+---
+# Convolutional Neural Network
+
+A proposta deste trabalho é a classificação de gemas de cana-de-açúcar potencialmente resistentes ao carvão da cana (*Sporisorium scitaminea*), via **Redes Neurais Convolucionais**.
+
+Para isso, será necessário o uso de dois pacotes: **EBImage** e **keras**. O primeiro serve para a leitura das imagens digitais, gerando matrizes com informações dos pixels. O segundo pacote visa o processamento das redes neurais, sendo utilizada a estrutura de redes neurais convolucionais neste trabalho.
+
+A princípio é feita a definição da pasta de trabalho, o local onde os arquivos serão carregados ou salvos.
+```{r}
+rm(list=ls())
+
+library(EBImage)
+library(keras)
+library(wvtool)
+
+getwd()
+setwd("~/Images")
+```
+
+A próxima etapa é a identificação e separação dos arquivos de interesse, uma vez que vários arquivos são salvos na nossa área de trabalho. Após a seleção dos arquivos desejados, separamos os arquivos de acordo com a classe que queremos trabalhar. Neste caso, são as classes resistente (*res*) ou suscetível(*sus*).
+
+Em nosso banco de dados temos 60 imagens de gemas, sendo 30 delas de clones suscetíveis e outras 30 de clones avaliadas como resistentes.
+```{r}
+img <- c(list.files())
+img <- img[-1:-2]
+res <- img[1:30]
+sus <- img[31:60]
+```
+
+Criamos então duas listas, chamada de *pics*, com as duas classes que iremos usar para a máquina aprender a classificar nossos clones. Através de um loop, usando o recurso do **for**, as duas listas conterão os arquivos de imagens com as suas respectivas classificações.
+```{r}
+pics <- list(res, sus)
+```
+
+Podemos então definir o número de amostras que serão usadas para treinamento e validação. Para o trabalho em questão será usada uma proporção de 70% das nossas amostras para treinamento e 30% para validação do nosso modelo de classificação.
+
+Passaremos a tratar cada imagem como uma lista, e não mais como um elemento da lista. Transformamos nossas imagens digitais em matriz de dados com a função **readImage()**. As matrizes de cada imagem terá 3 dimensões, uma para os pixels do eixo X, outra para o eixo y, sendo elas para as camadas de RGB.
+
+Agrupamos nossas amostras para treinamento usando os loops **for** e **while**. Os parâmetros definidos serão usados de acordo com as proporções de treinamento que foram estabelecidas. 
+```{r, message=FALSE, warning=FALSE}
+pop_train <- as.integer(0.7*length(img))
+pop_test <- as.integer(0.3*length(img))
+
+train_r<- list()
+train_s<- list()
+
+for (r in 1:(pop_train/2)) {
+  train_r[[r]] <- readImage(res[r])
+}
+
+for (s in ((pop_test/2)+1):length(sus)){
+  train_s[[s]] <- readImage(sus[s])
+}
+train_s <- train_s[-which(sapply(train_s, is.null))]
+
+train <- c(train_r,train_s)
+```
+
+Da mesma forma, iremos usar a função **readImage** e os loops **for** e **while** para agrupar nossas amostras para validação. Novamente, os parâmetros usados seguem baseados nas proporções estabelecidas para as amostras de validação.
+```{r,message=FALSE, warning=FALSE}
+test_r <- list()
+test_s <- list()
+
+for (r in ((pop_train/2)+1):length(res)) {
+  test_r[[r]] <- readImage(res[r])
+}
+
+for (s in 1:(pop_test/2)){
+  test_s[[s]] <- readImage(sus[s])
+}
+test <- c(test_r, test_s)
+test <- test[-which(sapply(test, is.null))]
+```
+
+Como nossa matriz ficou muito grande, é necessário reduzir a escala da nossa imagem. Desta forma, reduzimos o número de parâmetros a serem estimados no modelo e não perdemos grandes informações, como aconteceria se cortassemos as bordas da imagem.
+```{r}
+for (i in 1:length(train)) {
+  train[[i]] <- resize(train[[i]], 1280, 720)
+}
+
+for (i in 1:length(test)) {
+  test[[i]] <- resize(test[[i]], 1280, 720)
+}
+```
+
+Para realizar a convolução da rede neural pelo pacote **keras** é necessário fundir as imagens colocando-as em sequência. Fazemos isso tanto para as imagens de treinamento quanto para as imagens de validação através da função **combine**. O resultado  disso é a adição de um novo vetor que representa cada uma das fotos fundidas.
+
+A visualização fica mais fácil quando criamos uma única imagem destas sequencias, tarefa facilitada pela função **tile**.
+```{r}
+train <- EBImage::combine(train)
+x <- tile(train, 7)
+
+test <- EBImage::combine(test)
+y <- tile(test, 6)
+
+```
+
+O modo mais adequado para entrar com as informações no modelo a ser treinado e validado é levar a última camada gerada para a primeira posição dentre as camadas.
+```{r}
+train <- aperm(train, c(4, 1, 2, 3))
+test <- aperm(test, c(4, 1, 2, 3))
+```
+
+A seguir entramos com as informações fenotípicas das nossas amostras. Como trabalhamos com duas classes, usaremos duas classes: 0 para suscetíveis e 1 para resistentes. A entrada do fenótipo deve seguir a mesma ordem das imagens das amostras. Num primeiro momento, nossos vetores de 0 e 1 estão na forma de valores inteiros, portanto, a função **to_categorical** transforma estes valores em codificações binárias.
+```{r}
+trainy <- c(rep(1, (pop_train/2)), rep(0, pop_train/2))
+testy <- c(rep(1, pop_test/2), rep(0, pop_test/2))
+
+trainLabels <- to_categorical(trainy)
+testLabels <- to_categorical(testy)
+```
+
+A parte crucial da análise, se apresenta a seguir. Precisamos definir o número de camadas, suas especificações, dimensões e os descartes de parâmetros do modelo, tudo para obter o melhor rendimento da máquina. O modelo segue algumas informações específicas que exigem um entendimento mais apurado do analista de dados. Este tipo de modelo de RNC é voltado para o que geralmente se usa em reconhecimento de imagens.
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+  layer_conv_2d(filters = 32,
+                kernel_size = c(4,4),
+                padding = 'same',
+                input_shape = c(1280,720,3)) %>%
+  layer_activation_leaky_relu() %>%
+  layer_conv_2d(filters = 64,
+                kernel_size = c(4,4),
+                padding = 'same') %>%
+  layer_activation_leaky_relu() %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(rate = 0.25) %>%
+  layer_conv_2d(filters = 128,
+                kernel_size = c(4,4),
+                padding = 'valid') %>%
+  layer_activation_leaky_relu() %>%
+  layer_conv_2d(filters = 256,
+                kernel_size = c(4,4),
+                padding = 'valid') %>%
+  layer_activation_leaky_relu() %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(rate = 0.75) %>%
+  layer_conv_2d(filters = 512,
+                kernel_size = c(4,4),
+                padding = 'valid') %>%
+  layer_activation_leaky_relu() %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(rate = 0.75) %>%
+  layer_flatten() %>%
+  layer_dense(units = 512) %>%
+  layer_activation_leaky_relu() %>%
+  layer_dropout(rate = 0.75) %>%
+  layer_dense(units = 2,
+              activation = 'softmax') %>%
+  
+  compile(loss = 'binary_crossentropy',
+          optimizer = optimizer_sgd(lr = 0.01,
+                                    decay = 1e-6,
+                                    momentum = 0.9,
+                                    nesterov = TRUE),
+          metrics = c('accuracy'))
+
+summary(model)
+```
+
+Ajustamos o modelo usando as informações de treinamento que apresentamos anteriormente. Este ajuste é feito em 60 épocas com 32 de tamanho do lote. Há ainda a possibilidade de avaliar o ajuste do modelo validando uma proporção das imagens usadas para usar o próprio modelo. 
+
+Apesar de não ser comum validar o modelo usando a propria amostragem do treinamento, esta é uma forma simples de verificar o desempenho do aprendizado.
+```{r}
+history <- model %>%
+  fit(train,
+      trainLabels,
+      epochs = 20,
+      batch_size = 2,
+      validation_split = 0.15)
+
+model %>% save_model_weights_hdf5("meus_pesos.h5")
+
+oh_look <- load_model_weights_hdf5(model, "meus_pesos.h5")
+```
+
+A seguir, fazemos a avaliação do modelo estimando os valores de perdas e acurácia, considerando os dados de treinamento e teste. Temos ainda uma matriz de confusão da classificação predita x real. Por fim, verificamos como ficou a predição das amostras após o ajuste do modelo e o comparamos com a classificação real das amostras.
+```{r}
+model %>% 
+  evaluate(train, trainLabels)
+
+model %>%
+  evaluate(test, testLabels)
+
+pred <- model %>%
+  predict_classes(train)
+
+table(Predicted = pred, Actual = trainy)
+
+prob <- model %>%
+  predict_proba(train)
+
+cbind(prob, Predicted_class = pred, Actual = trainy)
+```
+
+
