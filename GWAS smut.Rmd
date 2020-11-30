@@ -1,0 +1,676 @@
+---
+title: "GWAS applied in sugarcane for smut resistence"
+output: html_notebook
+---
+
+# ANÁLISE DE DADOS FENOTÍPICOS ORDINAIS PARA ESTUDO DE ASSOCIAÇÃO GENÔMICA AMPLA
+## 1. Pré-processamento dos dados
+Carregamento da matriz de genotípica com codificação #/# fornecida pela RapidGenomics. 
+```{r}
+rm(list = ls())
+
+library(agricolae)
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+library(data.table)
+library(synbreed)
+library(BGData)
+
+setwd("~/GWAS")
+
+dados <- read_table2("AUDPC.txt") %>% 
+  pivot_longer(cols = starts_with("Av"),
+               names_to = "Av",
+               values_to = "Occurrency") %>%
+  pivot_wider(names_from = "Code",
+              values_from = "Occurrency")
+
+av0 <- as.Date("2019-09-11")
+av1 <- as.Date("2019-11-14")-av0
+av2 <- as.Date("2019-11-22")-av0
+av3 <- as.Date("2019-11-29")-av0
+av4 <- as.Date("2019-12-09")-av0
+av5 <- as.Date("2019-12-16")-av0
+av6 <- as.Date("2019-12-23")-av0
+av7 <- as.Date("2019-12-30")-av0
+av8 <- as.Date("2020-01-13")-av0
+av9 <- as.Date("2020-01-27")-av0
+av10 <- as.Date("2020-02-10")-av0
+
+Av <- c(
+  av1,
+  av2,
+  av3,
+  av4,
+  av5,
+  av6,
+  av7,
+  av8,
+  av9,
+  av10)
+
+Av_data <- sapply(Av, as.numeric)
+
+dados <- cbind(Av_data, dados) %>% 
+  mutate_if(is.character, as.numeric)
+
+res <- list()
+
+for (i in 3:ncol(dados)) {
+  res[i] <- audpc(evaluation = dados[,i], 
+                  dates = dados[,1],
+                  type = "relative")
+}
+
+res <- unlist(res)
+tab <- cbind(Clones = colnames(dados[,3:ncol(dados)]), 
+             AUDCP = as.numeric(res))%>%
+  as_tibble() %>%
+  type_convert()
+
+tab1 <- res
+res1 <- function(x)
+  c(Sturges=nclass.Sturges(tab1),
+    Scott=nclass.scott(tab1),
+    Freedman_Diaconis=nclass.FD(tab1))
+a<-t(matrix(res1(x)))
+
+tab2<-log1p(res)
+res2<-function(y)
+  c(Sturges=nclass.Sturges(tab2),
+    Scott=nclass.scott(tab2),
+    Freedman_Diaconis=nclass.FD(tab2))
+b<-t(matrix(res2(y)))
+
+tab3<-sqrt(res)
+res3<-function(z)
+  c(Sturges=nclass.Sturges(tab3),
+    Scott=nclass.scott(tab3),
+    Freedman_Diaconis=nclass.FD(tab3))
+c<-t(matrix(res3(z)))
+
+st1<-ggplot(data = data.frame(tab1),
+           mapping = aes(tab1)) +
+  geom_histogram(bins = nclass.Sturges(tab1),
+                 col = "red",
+                 fill = "green")+
+  ylab("Nº de observações") +
+  xlab("AACPD") +
+  geom_smooth(aes(tab1, seq(tab1)), se = FALSE, method = "loess" ) +
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+sc1<-ggplot(data = data.frame(tab1),
+           mapping = aes(tab1)) +
+  geom_histogram(bins = nclass.scott(tab1),
+                 col = "red",
+                 fill = "green")+
+  ylab("Nº de observações") +
+  xlab("AACDP") +
+  geom_smooth(aes(tab1, seq(tab1)), se = FALSE, method = "loess" ) +
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+fd1<-ggplot(data = data.frame(tab1),
+           mapping = aes(tab1)) +
+  geom_histogram(bins = nclass.FD(tab1),
+                 col = "red",
+                 fill = "green")+
+  ylab("Nº de observações") +
+  xlab("AACDP") +
+  geom_smooth(aes(tab1, seq(tab1)), se = FALSE, method = "loess" ) +
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+st1 | sc1 | fd1
+
+
+st2<-ggplot(data = data.frame(tab2),
+            mapping = aes(tab2)) +
+  geom_histogram(bins = nclass.Sturges(tab2),
+                 col = "red",
+                 fill = "blue")+
+  ylab("Nº de Observações") +
+  xlab("log(1+AACPD)") +
+  geom_smooth(aes(tab2, seq(tab2)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+sc2<-ggplot(data = data.frame(tab2),
+            mapping = aes(tab2)) +
+  geom_histogram(bins = nclass.scott(tab2),
+                 col = "red",
+                 fill = "blue")+
+  ylab("Nº de Observações") +
+  xlab("log(1+AACPD)") +
+  geom_smooth(aes(tab2, seq(tab2)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+fd2<-ggplot(data = data.frame(tab2),
+           mapping = aes(tab2)) +
+  geom_histogram(bins = nclass.FD(tab2),
+                 col = "red",
+                 fill = "blue")+
+  ylab("Nº de Observações") +
+  xlab("log(1+AACPD)") +
+  geom_smooth(aes(tab2, seq(tab2)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+st2 | sc2 | fd2
+
+st3<-ggplot(data = data.frame(tab3),
+            mapping = aes(tab3)) +
+  geom_histogram(bins = nclass.Sturges(tab3),
+                 col = "red",
+                 fill = "yellow") +
+  ylab("Nº de Observações") +
+  xlab(expression(sqrt(AACPD))) +
+  geom_smooth(aes(tab3, seq(tab3)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+sc3<-ggplot(data = data.frame(tab3),
+            mapping = aes(tab3)) +
+  geom_histogram(bins = nclass.scott(tab3),
+                 col = "red",
+                 fill = "yellow") +
+  ylab("Nº de Observações") +
+  xlab(expression(sqrt(AACPD))) +
+  geom_smooth(aes(tab3, seq(tab3)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+fd3<-ggplot(data = data.frame(tab3),
+            mapping = aes(tab3)) +
+  geom_histogram(bins = nclass.FD(tab3),
+                 col = "red",
+                 fill = "yellow") +
+  ylab("Nº de Observações") +
+  xlab(expression(sqrt(AACPD))) +
+  geom_smooth(aes(tab3, seq(tab3)), se = FALSE, method = "loess" )+
+  theme(axis.title.x = element_text(size = 9),
+        axis.title.y = element_text(size = 9))
+
+st3 | sc3 | fd3
+
+#Sturges
+a1 <- list()
+
+for (i in 1:nclass.Sturges(tab1)) {
+  a1[i] <- (i) * max(tab1)/nclass.Sturges(tab1)
+}
+
+b1 <- list()
+
+for (j in 1:nclass.Sturges(tab2)) {
+  b1[j] <- (j) * max(tab2)/nclass.Sturges(tab2)
+}
+
+c1 <- list()
+
+for (k in 1:nclass.Sturges(tab3)) {
+  c1[k] <- (k) * max(tab3)/nclass.Sturges(tab3)
+}
+
+
+#Scott
+a2 <- list()
+
+for (r in 1:nclass.scott(tab1)) {
+  a2[r] <- (r) * max(tab1)/nclass.scott(tab1)
+}
+
+b2 <- list()
+
+for (s in 1:nclass.scott(tab2)) {
+  b2[s] <- (s) * max(tab2)/nclass.scott(tab2)
+}
+
+c2 <- list()
+
+for (t in 1:nclass.scott(tab3)) {
+  c2[t] <- (t) * max(tab3)/nclass.scott(tab3)
+}
+
+#FD
+a3 <- list()
+for (u in 1:nclass.FD(tab1)) {
+  a3[u] <- (u) * max(tab1)/nclass.FD(tab1)
+}
+
+b3 <- list()
+
+for (v in 1:nclass.FD(tab2)) {
+  b3[v] <- (v) * max(tab2)/nclass.FD(tab2)
+}
+
+c3 <- list()
+
+for (w in 1:nclass.FD(tab3)) {
+  c3[w] <- (w) * max(tab3)/nclass.FD(tab3)
+}
+
+n_values<-list(unlist(a1),
+               unlist(a2),
+               unlist(a3))
+names(n_values)<-c("Sturges","Scott","Freedman-Diaconis")
+
+logxp1<-list(unlist(b1),
+             unlist(b2),
+             unlist(b3))
+names(logxp1)<-c("Sturges","Scott","Freedman-Diaconis")
+
+
+sqrt<-list(unlist(c1),
+           unlist(c2),
+           unlist(c3))
+names(sqrt)<-c("Sturges","Scott","Freedman-Diaconis")
+
+
+(st1 | sc1 | fd1)/(st2 | sc2 | fd2)/(st3 | sc3 | fd3)
+
+classes<-list("Sturges"=NULL,"Scott"=NULL,"Freedman-Diaconis"=NULL)
+
+for (i in 1:length(n_values[[1]])) {
+    classes[[1]][i]<-n_values[[1]][i]
+}
+
+for (i in 1:length(n_values[[2]])) {
+  classes[[2]][i]<-n_values[[2]][i]
+}
+
+for (i in 1:length(n_values[[3]])) {
+  classes[[3]][i]<-n_values[[3]][i]
+}
+
+classe<-numeric(nrow(tab))
+pheno <- cbind(tab,classe)
+for (i in 1:nrow(pheno)) {
+  if(pheno[i,2] <= classes[[2]][1]) {
+    pheno[i,3]=1
+  }
+  else if(pheno[i,2]>classes[[2]][1] & pheno[i,2]<=classes[[2]][2]) {
+    pheno[i,3]=2
+  }
+  else if(pheno[i,2]>classes[[2]][2] & pheno[i,2]<=classes[[2]][3]) {
+    pheno[i,3]=3
+  }
+  else if(pheno[i,2]>classes[[2]][3] & pheno[i,2]<=classes[[2]][4]) {
+    pheno[i,3]=4
+  }
+  else if(pheno[i,2]>classes[[2]][4] & pheno[i,2]<=classes[[2]][5]) {
+    pheno[i,3]=5
+  }
+  else if(pheno[i,2]>classes[[2]][5] & pheno[i,2]<=classes[[2]][6]) {
+    pheno[i,3]=6
+  }
+  else if(pheno[i,2]>classes[[2]][6]) {
+    pheno[i,3]=7
+  }
+}
+
+pheno <-as_tibble(pheno)
+
+data <- as_tibble(fread(input = "matriz-genotipos-cana.txt",
+                        header = TRUE))
+data[1:10,1:10]
+```
+Filtragem dos indivíduos que serão usados para análise.
+```{r}
+data2 <- data%>%
+  dplyr::select(pheno$Clones)
+data2 <- data2[1:791935,]
+```
+Recodificar elementos de matriz para a codificação exigida pelo pacote **HapEstXXR**.
+```{r, message=FALSE,warning=FALSE}
+#alternative
+{for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/1"), 
+       j = col, 
+       value = 2)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/1"), 
+       j = col, 
+       value = 1)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/0"), 
+       j = col, 
+       value = 1)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/0"), 
+       j = col, 
+       value = 0)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./1"), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./0"), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="."), 
+       j = col, 
+       value = NA)
+  
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/3"), 
+       j = col, 
+       value = NA)  
+  
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/3"),
+       j = col, 
+       value = NA)  
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="3/3"), 
+       j = col, 
+       value = NA)  
+  }
+```
+
+Transposição da tabela de genotipos e deslista-la.
+```{r}
+geno <- data2 %>%
+  add_column(SNP = paste("snp", 1:nrow(data2), sep = " "),
+             .before = "g514") %>%
+  pivot_longer(cols = starts_with("g"),
+               names_to = "Sample",
+               values_to = "Genotype") %>%
+  pivot_wider(names_from = "SNP",
+              values_from = "Genotype")
+```
+
+```{r}
+#alternative
+my_maf  <- 
+  function(geno, marker.label = NA) {
+    geno <- as.matrix(geno)
+    maf <- matrix(0, ncol = 9, nrow = dim(geno)[2])
+    colnames(maf) <- c(0:3, "Total", "call.rate", "minor.allele",
+                       "maf", "hwe.chisq.p.value")
+    for(i in 1:dim(geno)[2]) {
+      tabl <- table(geno[, i])
+      maf [i, names(tabl)] <- tabl
+      N  <- maf[i, "0"] + maf[i, "1"] + maf[i, "2"]
+      maf[i,"3"]<-nrow(geno)-N
+      maf[i, "Total"] <- N
+      maf[i, "call.rate"] <- 1 -(maf[i, "3"] / (N + maf[i, "3"]))
+      p  <- (2 * maf[i, "0"] + maf[i, "1"]) / N / 2
+      maf[i, "maf"] <- ifelse(p <= 0.5, p, 1-p)
+      maf[i, "minor.allele"] <- ifelse(maf[i, "0"] <= maf[i, "2"], 1, 2)
+      # hwe
+      observed <- maf[i, c("0", "2", "1")]
+      n1  <- (2*maf[i, "0"] + maf[i, "1"])^2 / 4 / N
+      n2  <- (2*maf[i, "2"] + maf[i, "1"])^2 / 4 / N
+      n3  <- (2*maf[i, "0"] + maf[i, "1"]) * 
+        (2 * maf[i, "2"] + maf[i, "1"]) / (2 * N) 
+      expexted <-  c(n1, n2, n3)
+      hwe.chisq <- sum((observed - expexted)^2 / expexted)
+      maf[i, "hwe.chisq.p.value"] <- 1-pchisq(hwe.chisq, 1)
+    }
+    maf <- maf[, c("0", "1", "2", "Total", "3", "call.rate", 
+                   "minor.allele", "maf", "hwe.chisq.p.value")]
+    colnames(maf) <- c("1/1", "1/2", "2/2", "Total", "NMISS", 
+                       "call.rate", "minor.allele",
+                       "maf", "hwe.chisq.p.value")
+    if(!(all(is.na(marker.label)))) {
+      rownames(maf) <- marker.label
+    }
+    return(maf)
+  }
+```
+
+## 2. Controle de qualidade dos meus SNPs
+Utilização do pacote **HapEstXXR** para estimar os parâmetros necessários para eliminar SNPs pouco informativos.
+```{r}
+#alternative
+a=data.frame(my_maf(geno = geno[,-1],
+             marker.label = colnames(geno[,-1])))
+
+```
+
+Estimação das frequências gênicas com base nas informações do *minor allele frequency* (maf).
+```{r}
+p1=NULL 
+q1=NULL 
+for(i in 1:ncol(geno[,-1])){ 
+  if(a$minor.allele[i]==1){ 
+    q1[i]= a$maf[i] 
+    p1[i]= 1-q1[i]} 
+  if(a$minor.allele[i]==2){ 
+    p1[i]= a$maf[i] 
+    q1[i]= 1-p1[i]} 
+} 
+```
+
+Eliminação de SNPs que possuem maf menor que 5%, Call Rate maior que 95% e desvio do equilíbrio de Hardy-Weimberg significativo a 5%.
+```{r}
+geno1 = geno[,-1]
+geno1 = geno1[,a$call.rate>=0.95 & 
+               a$maf>=0.05 &
+               a$hwe.chisq.p.value>=0.05/ncol(geno1)]  
+p=p1[a$call.rate>=0.95 & 
+       a$maf>=0.05 & 
+       a$hwe.chisq.p.value>=0.05/ncol(geno1)] 
+q=q1[a$call.rate>=0.95 & 
+       a$maf>=0.05 & 
+       a$hwe.chisq.p.value>=0.05/ncol(geno1)]
+```
+
+Recodificação dos elementos da matriz de genótipos para uma codificação mais usual.
+
+Nomeação dos SNPs remanescentes do controle de qualidade.
+```{r}
+id_snp_new <- tibble(id_snp=colnames(geno1))
+```
+
+Preparo de tabela a ser usada para a imputação de dados.
+```{r}
+mapa <- data[1:791935,1:2] %>%
+  add_column(id_snp = colnames(geno[-1]),
+             .before = "CHROM") %>%
+  separate(col = "CHROM",
+          into = c("specie","chr"),
+          sep = "h",
+          convert = TRUE,
+          extra = "drop",
+          fill = "right") %>%
+  dplyr::select(-"specie")
+
+mapa1 <- inner_join(x = id_snp_new,
+                    y = mapa,
+                    by = "id_snp")
+
+
+mapa2 <- data.frame(mapa1[,-1])
+rownames(mapa2) <- colnames(geno1)
+colnames(mapa2) <- c("chr", "pos")
+```
+
+## 3. Imputação de informações perdidas
+A imputação destas informações perdidas é condicionada ao **Equilíbrio de Hardy-Weinberg**.
+```{r}
+
+geno2 <- create.gpData(pheno = data.frame(pheno[,-2]),
+                       geno=geno1, 
+                       map=mapa2,
+                       map.unit="bp")
+
+impute <- codeGeno(gpData=geno2, 
+                   impute=TRUE, 
+                   impute.type="random", 
+                   label.heter=1)
+
+K <- kin(gpData = impute, #Habier et al. (2007)
+         ret = "gaussian") #vanRaden (2008)
+plot.relationshipMatrix(K)
+summary(K)
+
+gene <- impute$geno
+
+```
+
+```{r}
+# NOT TO RUN: step is no longer necessary because no population structure identified in genomic data. 
+library(ade4)
+pca <- dudi.pca(df = gene,
+                scale = FALSE)
+
+geno_corrected <- apply(X = gene,
+                        MARGIN = 2,
+                        FUN = function(e)
+                          residuals(lm(e~pca$li[,1] +
+                                         pca$li[,2] +
+                                         pca$li[,3] +
+                                         pca$li[,4] +
+                                         pca$li[,5] +
+                                         pca$li[,6] +
+                                         pca$li[,7] +
+                                         pca$li[,8])))
+```
+
+
+## 4. Criação  de uma BGData com todas as informações de marcadores, genotipos e fenótipos
+
+O pacote **BGData** permite uma versão de análise própria para GWAS, bastando escolher o método correto, neste caso "glm". Mas é necessário compilar em um único objeto as informações dos *marcadores*, dos *genótipos* dos indivíduos em relação aos marcadores e o *fenótipo* destes indivíduos para verificar a relação entre marcas e fenótipos.
+
+Além disso é possível obter as *relações de parentesco* entre indivíduos, apesar da interpretação da saída ser muito simploria e pouco entendível.
+```{r}
+MAP <- data.frame(cbind(chromosome = impute$map$chr, 
+            snp_ip = id_snp_new,
+            base_pair_position = impute$map$pos))
+
+smut_table <- BGData(geno = gene,
+                     pheno = data.frame(pheno$classe),
+                     map = MAP)
+
+res <- GWAS(formula = pheno.classe ~ .,
+            data = smut_table,
+            method = "glm")
+
+#include the following raws to proceed with glm method using parallel computing
+#it allows me to process with less needed memory
+
+gwasResult <- data.frame(cbind(SNP = id_snp_new,
+                               CHR = MAP$chromosome,
+                               BP = MAP$base_pair_position,
+                               P = res[,4]))
+
+gwasResult$adjusted_P <- p.adjust(gwasResult$P,
+                            method = "bonferroni")
+
+top <- cbind(gwasResult, 
+             Estimate = res[,1])
+rownames(top) <- NULL
+colnames(top) <- c("SNP", "CHR", "BP", "P", "Adjusted_P", "Estimate")
+top <- top[order(top$Adjusted_P),]
+top <- top[which(top$Adjusted_P < 0.05),]
+write.table(top, 
+            file = "top_snp.txt", 
+            sep = " ", 
+            row.names = FALSE)
+```
+
+## 5. Demonstração gráfica dos resultados
+
+```{r}
+library(qqman)
+
+qqman::qq(top$Adjusted_P)
+
+library("CMplot")
+
+CMplot(gwasResult,
+       plot.type = "c",
+       r = 1.6,
+       cir.legend = TRUE,
+       outward = TRUE,
+       cir.legend.col = "black",
+       cir.chr.h = .5,
+       chr.den.col = "orange",
+       file = "jpg",
+       memo = "",
+       dpi = 300,
+       chr.labels = paste("CHR",c(1:10),sep=""),
+       threshold = 5*10e-8)
+
+manhattan(gwasResult, chr= "CHR", bp= "BP", snp="SNP", p= "adjusted_P")
+```
+--------------- **FINAL DA ANÁLISE** ---------------
+
+##6. Modelos Lineares Mistos
+```{r}
+library(rrBLUP)
+
+phen.rrblup <- data.frame(Clone = seq(1:nrow(pheno)), Reaction = pheno[,3])
+
+gene.rrblup <- data.frame(gene)
+for(col in 1:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "0"),
+      j = col,
+      value = -1)
+}
+
+for(col in 1:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "1"),
+      j = col,
+      value = 0)
+}
+
+for(col in 4:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "2"),
+      j = col,
+      value = 1)
+}
+
+map.rrblup <- cbind(id_snp=id_snp_new, chromossome=impute$map$chr, position=impute$map$pos, t(gene.rrblup))
+
+k.rrblup <- A.mat(as.matrix(gene.rrblup))
+
+res.rrblup<-rrBLUP::GWAS(pheno=phen.rrblup,
+                         geno=map.rrblup,
+                         K=k.rrblup)
+```
+
