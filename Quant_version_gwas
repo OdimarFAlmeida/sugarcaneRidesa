@@ -1,0 +1,200 @@
+---
+title: "Quant_version_gwas"
+output: html_notebook
+---
+
+# ANÁLISE DE DADOS FENOTÍPICOS COM DISTRIBUIÇÃO CONTÍNUA
+## 1. Carregamento dos pacotes
+O ponto inicial é o carregamento dos pacotes utilizados para execução das análises.
+1 - O pacote agricolae será usado para estimação da área abaixo da curva de progresso da doença;
+2 - O pacote tidyverse vai ser útil para manipular o banco de dados;
+3 - O pacote ggplot2 tem por finalidade criar gráficos mais dinâmicos e apresentáveis;
+4 - O data.table serve para carregar nossa matriz genotípica no R (aparentemente, este pacote consome menos memória);
+5 - O synbreed vai nos prover diferentes metodos para imputação dos genótipos perdidos após as filtragens dos dados;
+6 - O pacote BGData será o responsável pela análise de associação genômica em sí para o método de modelos lineares generalizados;
+7 - O pacote rrBlup terá a mesma função do BGData, porém utilizará dos modelos mistos;
+8 - O BGLR fará o uso de modelagem bayesiana para a predição dos marcadores SNPs associados ao nosso fenótipo.
+
+```{r}
+library(agricolae)
+library(tidyverse)
+library(ggplot2)
+library(data.table)
+library(synbreed)
+library(BGData)
+```
+
+## 2. Carregamento dos dados Fenotípicos
+O arquivo AUDCP.txt fornece os valores fenótipicos para a característica de suscetibilidade ao carvão.
+Ao carregar o arquivo, serão exibidas 12 colunas sendo a primeira com a identificação dos clones, a segunda com a data de plantio e as demais com as avaliações em valores acumulados.
+As funções pivot_longer() e pivot_wider() são dois recursos do pacote tidyverse para transpor uma tabela ou matriz de dados.
+Após a transposição, os dados são convertidos em formatos de datas em relação à data do plantio (objeto av0) pela função as.Date.
+A estimação da área abaixo da curva de progresso da doença é feita pela função audpc() do pacote agricolae, podendo o resultado ser "relativo" ou "absoluto".
+```{r}
+dados <- read_table2("AUDPC.txt") %>% 
+  pivot_longer(cols = starts_with("Av"),
+               names_to = "Av",
+               values_to = "Occurrency") %>%
+  pivot_wider(names_from = "Code",
+              values_from = "Occurrency")
+
+av0 <- as.Date("2019-09-11")
+av1 <- as.Date("2019-11-14")-av0
+av2 <- as.Date("2019-11-22")-av0
+av3 <- as.Date("2019-11-29")-av0
+av4 <- as.Date("2019-12-09")-av0
+av5 <- as.Date("2019-12-16")-av0
+av6 <- as.Date("2019-12-23")-av0
+av7 <- as.Date("2019-12-30")-av0
+av8 <- as.Date("2020-01-13")-av0
+av9 <- as.Date("2020-01-27")-av0
+av10 <- as.Date("2020-02-10")-av0
+
+Av <- c(
+  av1,
+  av2,
+  av3,
+  av4,
+  av5,
+  av6,
+  av7,
+  av8,
+  av9,
+  av10)
+
+Av_data <- sapply(Av, as.numeric)
+
+dados <- cbind(Av_data, dados) %>% 
+  mutate_if(is.character, as.numeric)
+
+res <- list()
+
+for (i in 3:ncol(dados)) {
+  res[i] <- audpc(evaluation = dados[,i], 
+                  dates = dados[,1],
+                  type = "relative")
+}
+
+res <- unlist(res)
+tab <- cbind(Clones = colnames(dados[,3:ncol(dados)]), 
+             AUDCP = as.numeric(res))%>%
+  as_tibble() %>%
+  type_convert()
+```
+
+## 3. Carregamento de pré-processamento dos dados Genotípicos
+O pré-processamento dos dados genotípicos é mais demorado, pois a empresa que realizou a genotipagem dos materiais utiliza uma formatação dos dados um pouco diferente do que os principais pacotes trabalham.
+Em primeira instância, os dados da matriz genotípica será carregado pela função fread() do pacote data.table. Esta função parece utilizar menos recursos de memória do que a função built-in do R.
+
+```{r}
+data <- as_tibble(fread(input = "matriz-genotipos-cana.txt",
+                        header = TRUE))
+```
+O carregamento é um tanto quanto mais demorado em função da dimensionalidade da matriz.
+
+A partir de agora, os dados começaram a passar por uma série de tratamentos que consistem em filtrar os dados mais informativos e organiza-los para o processamento.
+Na matriz de materiais genotipados constam alguns clones que não foram fenotipados, portanto, estes indivíduos então serão removidos da planilha de dados. Além disso, alguns marcadores são algumas complementações de outras informações que não correspondem ao intuito desta análise, e portanto serão removidos.
+```{r}
+data2 <- data%>%
+  dplyr::select(pheno$Clones)
+data2 <- data2[1:791935,]
+```
+
+No output enviado pela RapidGenomics, os valores dos genótipos estão codificados em #/#, que não serve para análise dos pacotes que serão trabalhados.
+A recodificação destes valores é um pouco laboriosa, mas de fácil compreensão.
+```{r, message=FALSE,warning=FALSE}
+#alternative
+{for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/1"), 
+       j = col, 
+       value = 2)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/1"), 
+       j = col, 
+       value = 1)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/0"), 
+       j = col, 
+       value = 1)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/0"), 
+       j = col, 
+       value = 0)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./1"), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="./0"), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/."), 
+       j = col, 
+       value = NA)
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="."), 
+       j = col, 
+       value = NA)
+  
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="0/3"), 
+       j = col, 
+       value = NA)  
+  
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="1/3"),
+       j = col, 
+       value = NA)  
+
+for (col in 1:ncol(data2)) 
+  set (data2, 
+       i = which(data2[[col]]=="3/3"), 
+       j = col, 
+       value = NA)  
+  }
+```
+
+Após a recodificação dos valores de homozigotos dominantes, heterozigotos e homozigotos recessivos em 2, 1 e 0, respectivamente, a matriz precisa ser transposta para poder ser processada.
+A semelhança do que foi feito para a tabela de dados Fenotípicos, a transposição será feita pelas funções pivot_longer() e pivot_wider(), adicionando ainda uma coluna com o número de SNPs.
+```{r}
+geno <- data2 %>%
+  add_column(SNP = paste("snp", 1:nrow(data2), sep = " "),
+             .before = "g514") %>%
+  pivot_longer(cols = starts_with("g"),
+               names_to = "Sample",
+               values_to = "Genotype") %>%
+  pivot_wider(names_from = "SNP",
+              values_from = "Genotype")
+```
+
+
