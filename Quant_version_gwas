@@ -82,7 +82,7 @@ tab <- cbind(Clones = colnames(dados[,3:ncol(dados)]),
   type_convert()
 ```
 
-## 3. Carregamento de pré-processamento dos dados Genotípicos
+## 3. Carregamento e pré-processamento dos dados Genotípicos
 O pré-processamento dos dados genotípicos é mais demorado, pois a empresa que realizou a genotipagem dos materiais utiliza uma formatação dos dados um pouco diferente do que os principais pacotes trabalham.
 Em primeira instância, os dados da matriz genotípica será carregado pela função fread() do pacote data.table. Esta função parece utilizar menos recursos de memória do que a função built-in do R.
 
@@ -197,4 +197,165 @@ geno <- data2 %>%
               values_from = "Genotype")
 ```
 
+O controle de qualidade tem como objetivo remover SNPs pouco informativos que potencialmente trariam problemas para análise. Desta forma, alguns filtros são utilizados, tais como o MAF (minor allele frequency), call rate e desvio do equilíbrio de Hardy-Weinberg.
 
+Para esta análise a filtragem por MAF pode ser feita pela modificação da função maf() do pacote HapEstXXR. Na versão original deste pacote a codificação exigida deve ser 0, 1 e 2 para os genótipos homozigoto recessivo, homozigoto dominante e heterozigoto, respectivamente. Então um simples ajuste na função permite a inversão da codificação do homizigoto dominante com o heterozigoto.
+
+```{r}
+my_maf  <- 
+  function(geno, marker.label = NA) {
+    geno <- as.matrix(geno)
+    maf <- matrix(0, ncol = 9, nrow = dim(geno)[2])
+    colnames(maf) <- c(0:3, "Total", "call.rate", "minor.allele",
+                       "maf", "hwe.chisq.p.value")
+    for(i in 1:dim(geno)[2]) {
+      tabl <- table(geno[, i])
+      maf [i, names(tabl)] <- tabl
+      N  <- maf[i, "0"] + maf[i, "1"] + maf[i, "2"]
+      maf[i,"3"]<-nrow(geno)-N
+      maf[i, "Total"] <- N
+      maf[i, "call.rate"] <- 1 -(maf[i, "3"] / (N + maf[i, "3"]))
+      p  <- (2 * maf[i, "0"] + maf[i, "1"]) / N / 2
+      maf[i, "maf"] <- ifelse(p <= 0.5, p, 1-p)
+      maf[i, "minor.allele"] <- ifelse(maf[i, "0"] <= maf[i, "2"], 1, 2)
+      # hwe
+      observed <- maf[i, c("0", "2", "1")]
+      n1  <- (2*maf[i, "0"] + maf[i, "1"])^2 / 4 / N
+      n2  <- (2*maf[i, "2"] + maf[i, "1"])^2 / 4 / N
+      n3  <- (2*maf[i, "0"] + maf[i, "1"]) * 
+        (2 * maf[i, "2"] + maf[i, "1"]) / (2 * N) 
+      expexted <-  c(n1, n2, n3)
+      hwe.chisq <- sum((observed - expexted)^2 / expexted)
+      maf[i, "hwe.chisq.p.value"] <- 1-pchisq(hwe.chisq, 1)
+    }
+    maf <- maf[, c("0", "1", "2", "Total", "3", "call.rate", 
+                   "minor.allele", "maf", "hwe.chisq.p.value")]
+    colnames(maf) <- c("1/1", "1/2", "2/2", "Total", "NMISS", 
+                       "call.rate", "minor.allele",
+                       "maf", "hwe.chisq.p.value")
+    if(!(all(is.na(marker.label)))) {
+      rownames(maf) <- marker.label
+    }
+    return(maf)
+  }
+
+a=data.frame(my_maf(geno = geno[,-1],
+             marker.label = colnames(geno[,-1])))
+``` 
+
+O resultado desta última análise irá permitir a filtragem dos marcadores de acordo com as especificações exigidas. Neste caso seguem:
+1 - Eliminar marcadores com MAF menor que 5%;
+2 - Eliminar marcadores com Call Rate maior que 95%;
+3 - Eliminar marcadores com desvio do Equilíbrio de Hardy-Weinberg a X² maior que 5%.
+
+A estimativa de p e q são apenas para se ter conhecimento das frequências dos alelos de cada marcador na população.
+```{r}
+geno1 = geno[,-1]
+geno1 = geno1[,a$call.rate>=0.95 & 
+               a$maf>=0.05 &
+               a$hwe.chisq.p.value>=0.05/ncol(geno1)]  
+p=p1[a$call.rate>=0.95 & 
+       a$maf>=0.05 & 
+       a$hwe.chisq.p.value>=0.05/ncol(geno1)] 
+q=q1[a$call.rate>=0.95 & 
+       a$maf>=0.05 & 
+       a$hwe.chisq.p.value>=0.05/ncol(geno1)]
+```
+
+Com a eliminação dos SNPs da matriz genotípica, é necessário uma nova nomeação dos SNPs remanescentes.
+Para isso é necessário buscar o nome das colunas que remanesceram no objeto geno1 após a filtragem.
+```{r}
+id_snp_new <- tibble(id_snp=colnames(geno1))
+```
+A próxima etapa é a preparação dos dados para conduzir a imputação de valores perdidos na matriz genotíipica.
+A princípio, as informações com a identificação dos marcadores deve ser unido a matriz data com os dados brutos e identificando o cromossomo e a posição dos SNPs nos cromossomos.
+As funções add_column(), separate() e select() que acompanham o pacote tidyverse auxilíam na construção da tabela mapa.
+Em seguida, é feita a remoção dos SNPs anteriormente filtrados comparando as sequências do id_snp_new com a coluna id_snp da tabela mapa.
+A última etapa consiste na conversão do formato da tabela para um data.frame e nomeação das linhas e colunas da tabela.
+```{r}
+mapa <- data[1:791935,1:2] %>%
+  add_column(id_snp = colnames(geno[-1]),
+             .before = "CHROM") %>%
+  separate(col = "CHROM",
+          into = c("specie","chr"),
+          sep = "h",
+          convert = TRUE,
+          extra = "drop",
+          fill = "right") %>%
+  dplyr::select(-"specie")
+
+mapa1 <- inner_join(x = id_snp_new,
+                    y = mapa,
+                    by = "id_snp")
+
+
+mapa2 <- data.frame(mapa1[,-1])
+rownames(mapa2) <- colnames(geno1)
+colnames(mapa2) <- c("chr", "pos")
+```
+A formatação da tabela é ideal para o processo de imputação dos valores perdidos seguindo o Equilíbrio de Hardy-Weinberg.
+O pacote synbreed fornece as ferramentas necessárias para realizar tal processo.
+O processo é simples, mas requer um pouco de capacidade de processamento mais potente dependendo da dimensão do conjunto de dados.
+Para utilizar o pacote synbreed é preciso que o conjunto de dados esteja em formato gpData, reunindo informações de fenótipo, genótipo e posição dos SNPs (presentes no objeto mapa2).
+Podemos então estimar a matriz de parentesco e observar se a população estudada está estruturada em subpopulações, o que pode comprometer a nossa análise.
+Mas para a análise de associação genômica o resultado necessário é o impute$geno, neste caso armazenado no objeto gene.
+```{r}
+
+geno2 <- create.gpData(pheno = data.frame(pheno[,-2]),
+                       geno=geno1, 
+                       map=mapa2,
+                       map.unit="bp")
+
+impute <- codeGeno(gpData=geno2, 
+                   impute=TRUE, 
+                   impute.type="random", 
+                   label.heter=1)
+
+K <- kin(gpData = impute, #Habier et al. (2007)
+         ret = "gaussian") #vanRaden (2008)
+plot.relationshipMatrix(K)
+summary(K)
+
+gene <- impute$geno
+```
+
+# 4 - Processamento de GWAS
+
+O pacote BGData irá fornecer o modo mais simplificado e computacionalmente eficiente de modelo univariado para identificação dos marcadores mais associados a característica de interesse nesta análise, neste caso será aplicado o modelo de regressão linear simples.
+Mas primeiramente, os dados devem ser preparados para o formato BGData para que a função GWAS() os receba. Neste banco de dados BGData deve-se ter informações dos fenótipos, genótipos e posições dos SNPs para cada um dos clones avaliados.
+```{r}
+MAP <- data.frame(cbind(chromosome = impute$map$chr, 
+            snp_ip = id_snp_new,
+            base_pair_position = impute$map$pos))
+
+smut_table <- BGData(geno = gene,
+                     pheno = data.frame(pheno$classe),
+                     map = MAP)
+
+res <- GWAS(formula = pheno.classe ~ .,
+            data = smut_table,
+            method = "lm")
+```
+
+Após rodar a análise, o próximo passo será recuperar as informações para montar um gráfico que auxílie na identificação dos marcadores mais associados à variação do fenótipo e para proceder o BLAST visando a identificação dos genes associados aos marcadores.
+
+```{r}
+gwasResult <- data.frame(cbind(SNP = id_snp_new,
+                               CHR = MAP$chromosome,
+                               BP = MAP$base_pair_position,
+                               P = res[,4]))
+
+gwasResult$adjusted_P <- p.adjust(gwasResult$P,
+                            method = "bonferroni")
+
+top <- cbind(gwasResult, 
+             Estimate = res[,1])
+rownames(top) <- NULL
+colnames(top) <- c("SNP", "CHR", "BP", "P", "Adjusted_P", "Estimate")
+top <- top[order(top$Adjusted_P),]
+top <- top[which(top$Adjusted_P < 0.05),]
+write.table(top, 
+            file = "top_snp.txt", 
+            sep = " ", 
+            row.names = FALSE)
+```
