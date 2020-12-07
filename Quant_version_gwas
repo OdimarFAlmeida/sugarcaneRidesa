@@ -12,8 +12,8 @@ O ponto inicial é o carregamento dos pacotes utilizados para execução das an�
 4 - O data.table serve para carregar nossa matriz genotípica no R (aparentemente, este pacote consome menos memória);
 5 - O synbreed vai nos prover diferentes metodos para imputação dos genótipos perdidos após as filtragens dos dados;
 6 - O pacote BGData será o responsável pela análise de associação genômica em sí para o método de modelos lineares generalizados;
-7 - O pacote rrBlup terá a mesma função do BGData, porém utilizará dos modelos mistos;
-8 - O BGLR fará o uso de modelagem bayesiana para a predição dos marcadores SNPs associados ao nosso fenótipo.
+7 - O pacote rrBLUP terá a mesma função do BGData, porém utilizará dos modelos mistos;
+8 - O BGLR fará o uso de modelagem bayesiana para a predição dos marcadores SNPs associados ao fenótipo.
 
 ```{r}
 library(agricolae)
@@ -22,6 +22,7 @@ library(ggplot2)
 library(data.table)
 library(synbreed)
 library(BGData)
+library(rrBLUP)
 ```
 
 ## 2. Carregamento dos dados Fenotípicos
@@ -358,4 +359,42 @@ write.table(top,
             file = "top_snp.txt", 
             sep = " ", 
             row.names = FALSE)
+```
+A análise de BLUP é processada pelo pacote rrBLUP utilizando a função GWAS() (atentar para o nome da função, pois é o mesmo que no pacote BGData).
+Neste pacote, a codificação dos genótipos é diferente, sendo -1, 0 e 1 para os genótipos homozigoto do alelo mais raro, heterozigoto e homozigoto do alelo mais frequente, respectivamente.
+As informações de entrada precisam estar organizadas de forma diferente para este pacote.
+A principal vantagem de utilizar a análise com BLUP é contar com a matriz de parentesco A.
+
+```{r}
+phen.rrblup <- data.frame(Clone = seq(1:nrow(pheno)), Reaction = pheno[,3])
+
+gene.rrblup <- data.frame(gene)
+for(col in 1:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "0"),
+      j = col,
+      value = -1)
+}
+
+for(col in 1:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "1"),
+      j = col,
+      value = 0)
+}
+
+for(col in 4:ncol(gene.rrblup)) {
+  set(x = gene.rrblup,
+      i = which(gene.rrblup[[col]] == "2"),
+      j = col,
+      value = 1)
+}
+
+map.rrblup <- cbind(id_snp=id_snp_new, chromossome=impute$map$chr, position=impute$map$pos, t(gene.rrblup))
+
+k.rrblup <- A.mat(as.matrix(gene.rrblup))
+
+res.rrblup<-rrBLUP::GWAS(pheno=phen.rrblup,
+                         geno=map.rrblup,
+                         K=k.rrblup)
 ```
